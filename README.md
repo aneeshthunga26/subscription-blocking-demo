@@ -6,7 +6,7 @@ the exact bug open-msupply hit with its V7 sync, made visible in a browser.
 
 The problem of one request blocking others is not only a subscription issue and can happen with regular http requests (graphql queries/mutations etc.) as well. 
 
-This demo builds upon [`runtime-blocking-demo`](https://github.com/andreievg/runtime-blocking-demo) which is a terminal version of the same lesson; this demo adds the full stack similar to what [`open-msupply](https://github.com/msupply-foundation/open-msupply)
+This demo builds upon [`runtime-blocking-demo`](https://github.com/andreievg/runtime-blocking-demo) which is a terminal version of the same lesson; this demo adds the full stack similar to what [`open-msupply`](https://github.com/msupply-foundation/open-msupply)
 actually run in production: actix workers, `async-graphql` subscriptions over
 WebSocket, a diesel "DB layer", and a React + Tailwind SPA so you can *watch*
 the starvation happen.
