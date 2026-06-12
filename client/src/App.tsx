@@ -12,15 +12,16 @@ interface Config {
   progressEvery: number
 }
 
-const NAIVE_CODE = `// ❌ resolver spawns the work onto the runtime thread
-let (tx, rx) = mpsc::channel(256);
-tokio::spawn(async move {           // same thread as every socket
+const NAIVE_CODE = `// ❌ no spawn at all — work runs inside the stream's poll
+async_stream::stream! {             // polled by the connection task
+    let mut conn = open_seeded_db(total);
     for id in 0..total {
-        integrate_one(&mut conn, id);  // blocking diesel call
-        tx.send(progress).await;       // channel has room → never yields
+        integrate_one(&mut conn, id);  // blocks the runtime thread
+        if (id + 1) % 5_000 == 0 {
+            yield progress;  // returns Ready — NOT a scheduling point
+        }
     }
-});
-ReceiverStream::new(rx)`
+}`
 
 const FIXED_CODE = `// ✅ resolver hands the work to the blocking pool
 let (tx, rx) = mpsc::channel(256);
@@ -78,13 +79,14 @@ export default function App() {
 
       <main className="grid gap-5 lg:grid-cols-2">
         <SyncCard
-          badge="❌ naive"
+          badge="❌ no spawn"
           title="subscription { syncNaive }"
           tone="rose"
-          description="How open-msupply's V7 sync used to run: blocking diesel work spawned straight
-            onto the actix worker's current-thread runtime. The loop never yields, so this thread
-            ships no WebSocket frames, no heartbeat, no HTTP responses until the whole sync ends —
-            progress arrives as one burst."
+          description="No task, no channel: the diesel work runs inside the stream itself, driven by
+            this connection's task on the runtime thread. Intuition says each yield lets the
+            scheduler in — it doesn't. A yield just returns Ready to the caller, which polls the
+            stream again; an await that is already Ready never reaches the scheduler. The thread
+            is never released: same total starvation as the tokio::spawn version on main."
           code={NAIVE_CODE}
           run={naive}
         />
@@ -104,11 +106,14 @@ export default function App() {
         <h3 className="mb-2 font-semibold text-slate-200">What to look for</h3>
         <ul className="list-disc space-y-1.5 pl-5">
           <li>
-            <span className="text-rose-400">❌ with 1 worker:</span> the progress bar sits at 0%,
-            the heartbeat above flatlines, HTTP ping hangs — the <em>entire server</em> is frozen.
-            Then every frame lands at once: compare the green/red{' '}
-            <span className="font-mono">server +t</span> vs <span className="font-mono">client +t</span>{' '}
-            columns — frames were produced on time but could not be delivered.
+            <span className="text-rose-400">❌ no spawn:</span> with 1 worker the progress bar
+            sits at 0%, the heartbeat flatlines, HTTP ping hangs — then every frame lands at
+            once. The yields changed nothing: <span className="font-mono">server +t</span> spreads
+            across the run while <span className="font-mono">client +t</span> is identical for
+            every row. Yielding <em>items</em> is not yielding the <em>thread</em> — only a
+            Pending (e.g. <span className="font-mono">yield_now().await</span>) reaches the
+            scheduler, and only <span className="font-mono">spawn_blocking</span> (the{' '}
+            <span className="font-mono">main</span> branch's ✅ card) actually fixes it.
           </li>
           <li>
             <span className="text-emerald-400">✅ spawn_blocking:</span> frames stream live

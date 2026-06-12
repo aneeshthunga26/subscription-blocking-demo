@@ -1,6 +1,8 @@
 //! GraphQL schema: one query root, three subscriptions.
 //!
-//! * `syncNaive`          — ❌ blocking diesel loop spawned onto the runtime
+//! * `syncNaive`          — ❌ no spawn at all: blocking diesel work runs
+//!                          INSIDE the stream — yielding items does NOT
+//!                          yield the thread; same starvation as a spawn
 //! * `syncSpawnBlocking`  — ✅ same loop handed to tokio's blocking pool
 //! * `heartbeat`          — 4 Hz tick; freezes whenever this worker thread is
 //!                          hogged, making starvation visible from the UI
@@ -83,45 +85,48 @@ pub struct SubscriptionRoot;
 
 #[Subscription]
 impl SubscriptionRoot {
-    /// ❌ THE BUG — how open-msupply's V7 sync used to run.
+    /// ❌ NO SPAWN AT ALL — the work runs inside the stream itself.
     ///
-    /// `tokio::spawn` puts the task on this worker's current-thread runtime,
-    /// i.e. the SAME OS thread that drives this WebSocket, the heartbeat
-    /// stream, and every other connection on this worker. The task's body is
-    /// synchronous diesel work; `tx.send(...).await` always finds channel
-    /// room so it returns `Ready` without ever yielding. The loop therefore
-    /// holds the thread from first record to last: progress events pile up
-    /// in the channel and the subscriber receives the whole run in one burst
-    /// at the end.
+    /// There is no task and no channel here: the resolver returns a stream
+    /// whose `poll` does the diesel work directly, driven by the connection
+    /// task that owns this WebSocket — i.e. ON the runtime thread.
+    ///
+    /// The intuition trap: "it yields an item every 5,000 records, surely
+    /// that lets the scheduler in?" Measured answer: NO. `yield` makes this
+    /// poll return `Ready(Some(item))` — control goes to the CALLER (the
+    /// connection task's forwarding loop), not to the scheduler. The caller
+    /// `.await`s things that are also instantly `Ready` and polls this
+    /// stream again. Ready-awaits never reach the scheduler, so from first
+    /// poll to last the thread is never released: no WS write is flushed, no
+    /// heartbeat fires, and every frame arrives in one burst at the end —
+    /// byte-for-byte the same starvation as the `tokio::spawn` version on
+    /// the main branch.
+    ///
+    /// (The band-aid that WOULD make this stream live is an explicit
+    /// `tokio::task::yield_now().await` after each `yield` — a real Pending
+    /// — which is variant 02 in the sibling runtime-blocking-demo. The fix
+    /// is still spawn_blocking.)
     async fn sync_naive(&self, records: Option<i32>) -> impl Stream<Item = SyncProgress> {
         let total = records.map(|r| r as i64).unwrap_or(DEFAULT_RECORDS);
-        let (tx, rx) = mpsc::channel::<SyncProgress>(CHANNEL_BUFFER);
 
-        tokio::spawn(async move {
-            // Everything below blocks the runtime thread, starting with the
-            // seed itself.
+        async_stream::stream! {
+            // Everything below runs on the runtime thread, starting with the
+            // seed itself (the first poll blocks for the whole seed).
             let mut conn = open_seeded_db(total);
             let started = Instant::now();
             for id in 0..total {
                 integrate_one(&mut conn, id);
                 if (id + 1) % PROGRESS_EVERY == 0 || id + 1 == total {
-                    let progress = SyncProgress {
+                    // The only points where this stream's poll returns and
+                    // the scheduler gets a look-in.
+                    yield SyncProgress {
                         done: (id + 1) as i32,
                         total: total as i32,
                         server_elapsed_ms: started.elapsed().as_millis() as i32,
                     };
-                    // Async send — but it only yields when the channel is
-                    // full, which it never is. No yield, no scheduling, no
-                    // frames out.
-                    if tx.send(progress).await.is_err() {
-                        break; // subscriber went away
-                    }
                 }
             }
-            // tx drops here → stream completes after the burst is drained.
-        });
-
-        ReceiverStream::new(rx)
+        }
     }
 
     /// ✅ THE FIX — what open-msupply does now (synchroniser.rs,
