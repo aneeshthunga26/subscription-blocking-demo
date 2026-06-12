@@ -1,0 +1,29 @@
+[package]
+name = "subscription-blocking-server"
+version = "0.1.0"
+edition = "2021"
+
+# Versions deliberately mirror open-msupply's server workspace so the demo
+# translates 1:1 (see open-msupply/server/Cargo.toml).
+[dependencies]
+# actix-web brings in actix-rt: each HttpServer worker is one OS thread
+# running its own CURRENT-THREAD tokio runtime — the setup open-msupply uses.
+actix-web = { version = "4.13", features = ["macros"] }
+actix-rt = "2.10"
+
+async-graphql = "7.2"
+async-graphql-actix-web = "7.2"
+
+# diesel + bundled SQLite: real synchronous DB work, self-contained binary.
+diesel = { version = "2.3", features = ["sqlite"] }
+libsqlite3-sys = { version = "0.36", features = ["bundled"] }
+
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+serde_json = "1"
+
+[profile.dev]
+# diesel + sqlite are painfully slow at opt-level 0; the demo timings assume
+# at least some optimisation so `cargo run` behaves like `--release`.
+opt-level = 2
