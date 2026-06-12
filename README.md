@@ -4,8 +4,9 @@ End-to-end demo of **when and why `spawn_blocking` is needed** when you serve
 GraphQL subscriptions from actix while doing synchronous (diesel) DB work —
 the exact bug open-msupply hit with its V7 sync, made visible in a browser.
 
-The sibling crate [`runtime-blocking-demo`](../runtime-blocking-demo) is the
-minimal terminal version of the same lesson; this demo adds the full stack you
+The problem of one request blocking others is not only a subscription issue and can happen with regular http requests (graphql queries/mutations etc.) as well. 
+
+This demo builds upon [`runtime-blocking-demo`](https://github.com/andreievg/runtime-blocking-demo) which is a terminal version of the same lesson; this demo adds the full stack similar to what [`open-msupply](https://github.com/msupply-foundation/open-msupply)
 actually run in production: actix workers, `async-graphql` subscriptions over
 WebSocket, a diesel "DB layer", and a React + Tailwind SPA so you can *watch*
 the starvation happen.
@@ -90,6 +91,12 @@ frames still arrive in one burst** — its WebSocket and the task it spawned
 share one worker thread, and actix workers are *isolated single-thread
 runtimes with no work-stealing* (unlike `#[tokio::main(flavor =
 "multi_thread")]`, which is what makes the sibling demo's variant 04 pass).
+
+Note that more workers only improve the *odds*, and not a guarntee that other tasks won't get starved. Each
+new connection is simply assigned to the next worker in turn, and a spawned
+task stays on the worker that spawned it. So the blocking task can still land
+on the same worker as another task (the heartbeat, someone else's request) —
+and when it does, that task starves just as badly as with one worker.
 
 That's the production trap: on a many-core server the bug shrinks to "this one
 subscription is weirdly bursty", and on the single-core box in the field it
