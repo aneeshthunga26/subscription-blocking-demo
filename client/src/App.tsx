@@ -86,7 +86,7 @@ export default function App() {
             this connection's task on the runtime thread. Intuition says each yield lets the
             scheduler in — it doesn't. A yield just returns Ready to the caller, which polls the
             stream again; an await that is already Ready never reaches the scheduler. The thread
-            is never released: same total starvation as the tokio::spawn version on main."
+            is never released: same total starvation as spawning the loop with tokio::spawn."
           code={NAIVE_CODE}
           run={naive}
         />
@@ -112,8 +112,8 @@ export default function App() {
             across the run while <span className="font-mono">client +t</span> is identical for
             every row. Yielding <em>items</em> is not yielding the <em>thread</em> — only a
             Pending (e.g. <span className="font-mono">yield_now().await</span>) reaches the
-            scheduler, and only <span className="font-mono">spawn_blocking</span> (the{' '}
-            <span className="font-mono">main</span> branch's ✅ card) actually fixes it.
+            scheduler, and only <span className="font-mono">spawn_blocking</span> (the ✅ card)
+            actually fixes it.
           </li>
           <li>
             <span className="text-emerald-400">✅ spawn_blocking:</span> frames stream live

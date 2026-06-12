@@ -99,8 +99,8 @@ impl SubscriptionRoot {
     /// stream again. Ready-awaits never reach the scheduler, so from first
     /// poll to last the thread is never released: no WS write is flushed, no
     /// heartbeat fires, and every frame arrives in one burst at the end —
-    /// byte-for-byte the same starvation as the `tokio::spawn` version on
-    /// the main branch.
+    /// byte-for-byte the same starvation as `tokio::spawn`ing this loop onto
+    /// the runtime (this repo's first version — see git history).
     ///
     /// (The band-aid that WOULD make this stream live is an explicit
     /// `tokio::task::yield_now().await` after each `yield` — a real Pending
